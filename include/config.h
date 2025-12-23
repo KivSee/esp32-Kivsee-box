@@ -25,13 +25,10 @@
 
 // Wifi optional static ip (leave client ip empty to disable)
 #define WIFI_STATIC_IP    0 // set to 1 to enable static ip
-#define WIFI_CLIENT_IP    IPAddress(10, 0, 0, 221)
-#define WIFI_GATEWAY_IP   IPAddress(10, 0, 0, 1)
+#define WIFI_CLIENT_IP    IPAddress(10, 0, 1, 221)
+#define WIFI_GATEWAY_IP   IPAddress(10, 0, 1, 1)
 #define WIFI_SUBNET_IP    IPAddress(255, 255, 255, 0)
-#define WIFI_DNS_IP       IPAddress(10, 0, 0, 1)
-
-#define OTA_PATCH 0 // Set to 0 if you don't want to update your code over-the-air
-#define OTA_PASS "set_ota_password"
+#define WIFI_DNS_IP       IPAddress(10, 0, 1, 1)
 
 /* wiring the MFRC522 to ESP32
 RST     = GPIO22
