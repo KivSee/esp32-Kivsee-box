@@ -9,8 +9,13 @@
 
 // MQTT Client Config
 #define MQTT_CLIENT_ID "sensors/rfid"
-// change box number for each box!
-#define MQTT_UNIQUE_ID "/box1"
+// Box identity comes from BOX_NAME in secrets.h (e.g. "box1"): set it for each box
+// before uploading. Two boxes with the same name share an MQTT client id and keep
+// disconnecting each other.
+#ifndef BOX_NAME
+#error "Define BOX_NAME (e.g. \"box1\") in include/secrets.h"
+#endif
+#define MQTT_UNIQUE_ID "/" BOX_NAME
 #define MQTT_TOPIC_MONITOR MQTT_CLIENT_ID MQTT_UNIQUE_ID "/monitor"
 #define MQTT_TOPIC_MONITOR_QoS 0 // Keep 0 if you don't know what it is doing
 #define MQTT_TOPIC_CHIP MQTT_CLIENT_ID MQTT_UNIQUE_ID "/chip"
@@ -19,8 +24,7 @@
 #define MQTT_TOPIC_LEDS_QoS 0 // Keep 0 if you don't know what it is doing
 
 // WiFi Config
-// change box number for each box!
-#define WIFI_CLIENT_ID "box1"
+#define WIFI_CLIENT_ID BOX_NAME
 #define WIFI_RECONNECT_TIME 2 // in seconds
 
 // Wifi optional static ip (leave client ip empty to disable)

@@ -47,7 +47,6 @@ byte buffer[18];
 byte size = sizeof(buffer);
 bool read_success, write_success, auth_success;
 byte PICC_version;
-unsigned int readCard[4];
 
 bool send_chip_data = true;
 bool is_old_chip = false;
@@ -135,10 +134,21 @@ void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties 
     }
     Serial.println();
 
-    DynamicJsonDocument doc(50);
-    deserializeJson(doc, payload);
-    color = doc["color"];
-    master_state = doc["master_state"];
+    // The payload is not null-terminated: parse exactly len bytes. Ignore split or
+    // malformed messages (e.g. an empty retained clear) instead of switching the box off.
+    if (index != 0 || len != total) {
+      Serial.println("Leds message arrived in parts, ignoring");
+      return;
+    }
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, payload, len);
+    if (err) {
+      Serial.print("Leds message not valid JSON, keeping current state: ");
+      Serial.println(err.c_str());
+      return;
+    }
+    color = doc["color"] | color;
+    master_state = doc["master_state"] | master_state;
     Serial.print("color: ");
     Serial.println(color);
     Serial.print("master_state: ");
@@ -244,13 +254,16 @@ void loop() {
   // Dump debug info about the card; PICC_HaltA() is automatically called
   // mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
 
-  // get card uid
-  Serial.print("found tag ID: ");
-  for (int i = 0; i < mfrc522.uid.size; i++) {  // for size of uid.size write uid.uidByte to readCard
-    readCard[i] = mfrc522.uid.uidByte[i];
-    Serial.print(readCard[i], HEX);
+  // get card uid: every uid byte (4, 7 or 10 of them) as two lowercase hex digits,
+  // so different chips never produce the same string (unpadded "1"+"23" == "12"+"3")
+  String UID;
+  for (byte i = 0; i < mfrc522.uid.size && i < sizeof(mfrc522.uid.uidByte); i++) {
+    char hex[3];
+    snprintf(hex, sizeof(hex), "%02x", mfrc522.uid.uidByte[i]);
+    UID += hex;
   }
-  Serial.println();
+  Serial.print("found tag ID: ");
+  Serial.println(UID);
 
   // get PICC card type
   // Serial.print(F("PICC type: "));
@@ -283,9 +296,6 @@ void loop() {
 //     return;
 //   }
 
-  // consider not sending the chip data if its the same chip? prevent system load and errors?
-  String UID = String(readCard[0],HEX) + String(readCard[1],HEX) + String(readCard[2],HEX) + String(readCard[3],HEX);
-
   // check if its an old chip and encode it with new format
 //   is_old_chip = (buffer[0] != 0x00);  // first byte not 0x00 means old chip
 //   if (is_old_chip) {
@@ -310,12 +320,12 @@ void loop() {
   chip_color = buffer[1]; // color is at byte 1
 
   if (mqttClient.connected() && send_chip_data) {
-    StaticJsonDocument<128> chip_data;
+    JsonDocument chip_data;
     chip_data["UID"] = UID;
     chip_data["color"] = chip_color;
     chip_data["old_chip"] = is_old_chip;
-    char chip_data_buffer[100];
-    serializeJson(chip_data, chip_data_buffer);
+    char chip_data_buffer[128];  // fits a 10-byte (20 hex digit) uid
+    serializeJson(chip_data, chip_data_buffer, sizeof(chip_data_buffer));
     mqttClient.publish(MQTT_TOPIC_CHIP, MQTT_TOPIC_CHIP_QoS, false, chip_data_buffer);
     Serial.print("Sending chip data: ");
     serializeJson(chip_data, Serial);
