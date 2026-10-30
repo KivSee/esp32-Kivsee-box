@@ -97,6 +97,40 @@ bool write_and_verify(byte blockAddr, byte dataBlock[], byte buffer[], byte size
     }
 }
 
+/**
+ * True when the reader still has the settings PCD_Init gave it. A dip on its 3.3 V
+ * (e.g. WiFi starting) can reset it to power-on defaults: it still answers on SPI and
+ * reports its version, but its antenna is off, so it never sees a chip.
+ */
+byte reader_version = 0; // last value read from VersionReg, reported on the monitor topic
+
+bool reader_ok(bool verbose = false) {
+    byte version = mfrc522.PCD_ReadRegister(MFRC522::VersionReg);
+    reader_version = version;
+    byte tx_ask = mfrc522.PCD_ReadRegister(MFRC522::TxASKReg);
+    byte tx_control = mfrc522.PCD_ReadRegister(MFRC522::TxControlReg);
+    if (verbose)
+        Serial.printf("[RFID] version 0x%02X, TxASK 0x%02X, TxControl 0x%02X\n", version, tx_ask, tx_control);
+    // MFRC522 v1/v2 and the common clones; anything else is garbage on SPI
+    if (version != 0x91 && version != 0x92 && version != 0x88 && version != 0x12 && version != 0xB2)
+        return false;
+    // PCD_Init sets TxASKReg to 0x40 and the antenna bits; both are 0 after a reset
+    return (tx_ask & 0x40) && (tx_control & 0x03) == 0x03;
+}
+
+/**
+ * Hard reset through the RST pin, then init. PCD_Init alone only does a soft reset,
+ * which is an SPI command and can't recover a reader whose SPI is stuck.
+ */
+void reader_reset() {
+    pinMode(RST_PIN, OUTPUT);
+    digitalWrite(RST_PIN, LOW);
+    delay(10);
+    digitalWrite(RST_PIN, HIGH);
+    delay(50); // oscillator start-up (datasheet 8.8.2)
+    mfrc522.PCD_Init();
+}
+
 bool UIDcompare (unsigned int prevUID[], unsigned int currUID[], int UIDLen) {
     for (int i = 0; i < UIDLen; i++) {
         if (prevUID[i] != currUID[i])

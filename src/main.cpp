@@ -46,12 +46,37 @@ byte trailerBlock   = 7;
 byte buffer[18];
 byte size = sizeof(buffer);
 bool read_success, write_success, auth_success;
-byte PICC_version;
+
+#define READER_CHECK_MS    1000
+#define READER_BACKOFF_MS  10000
+#define READER_MAX_RESETS  3
+unsigned long last_reader_check = 0;
+int reader_fails = 0;            // failed checks in a row
+unsigned long reader_resets = 0; // hard resets since boot
+const char* reader_state = "starting";
 
 bool send_chip_data = true;
 bool is_old_chip = false;
 byte chip_color = 0x0;
 
+
+// Retained box status: alive plus the RFID reader's health, so a box off USB can be checked
+// with mosquitto_sub. Published on connect and whenever the reader state changes.
+void publish_monitor() {
+  if (!mqttClient.connected())
+    return;
+  JsonDocument monitor;
+  monitor["alive"] = true;
+  monitor["reader"] = reader_state;
+  char version[5];
+  snprintf(version, sizeof(version), "0x%02X", reader_version);
+  monitor["reader_version"] = version;
+  monitor["reader_resets"] = reader_resets;
+  monitor["uptime_s"] = millis() / 1000;
+  char monitor_buffer[160];
+  serializeJson(monitor, monitor_buffer, sizeof(monitor_buffer));
+  mqttClient.publish(MQTT_TOPIC_MONITOR, MQTT_TOPIC_MONITOR_QoS, true, monitor_buffer);
+}
 
 void connectToMqtt() {
   Serial.println("[MQTT] Connecting to MQTT...");
@@ -110,7 +135,7 @@ void onMqttConnect(bool sessionPresent) {
   Serial.print("Subscribing to ");
   Serial.println(MQTT_TOPIC_LEDS);
   Serial.println("Sending alive message");
-  mqttClient.publish(MQTT_TOPIC_MONITOR, MQTT_TOPIC_MONITOR_QoS, true, "{\"alive\": true}");
+  publish_monitor();
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
@@ -223,6 +248,11 @@ void setup() {
   ArduinoOTA.begin();
   Serial.println("[OTA] Ready");
 
+  // hard-reset the reader once at start: a soft reset can't recover it if it powered up stuck
+  reader_reset();
+  reader_state = reader_ok(true) ? "ok" : "fault";
+  publish_monitor();
+
   // Turn ON board led after wifi connect
   digitalWrite(LED_GPIO,HIGH);
   Serial.println("Setup done.");
@@ -238,9 +268,28 @@ void loop() {
   FastLED.show();
   FastLED.delay(20);
 
-  // read the RFID reader version to send over the heartbeat as data
-  PICC_version = 0;
-  PICC_version = mfrc522.PCD_ReadRegister(MFRC522::VersionReg);
+  // check the reader every second and hard-reset it when it's stuck or lost its settings;
+  // after a few failed resets in a row, back off and retry every 10 s
+  if (millis() - last_reader_check >= (reader_fails < READER_MAX_RESETS ? READER_CHECK_MS : READER_BACKOFF_MS)) {
+    last_reader_check = millis();
+    if (reader_ok()) {
+      if (reader_fails > 0) {
+        Serial.println("[RFID] reader OK again");
+        reader_state = "ok";
+        publish_monitor();
+      }
+      reader_fails = 0;
+    } else {
+      reader_fails++;
+      reader_resets++;
+      reader_state = "fault";
+      Serial.printf("[RFID] reader not OK, hard reset (%d)\n", reader_fails);
+      reader_ok(true);
+      publish_monitor(); // reports the bad version read
+      reader_reset();
+      reader_ok(true);
+    }
+  }
 
   // START RFID HANDLING
   // Look for new cards
